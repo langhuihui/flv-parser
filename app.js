@@ -19,9 +19,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const level = document.getElementById('level');
     
     const parser = new FLVParser();
-    let isFolded = false;
+    let isFolded = true;
     let frameWidth = 10;
     let currentFrames = [];
+    let selectedBlock = null;
 
     // Prevent default drag behaviors
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -71,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isFolded = !isFolded;
         toggleFoldButton.textContent = isFolded ? '展开非关键帧' : '折叠非关键帧';
         updateTimelineView();
+        updateTableView();
     });
 
     zoomInButton.addEventListener('click', () => {
@@ -83,6 +85,100 @@ document.addEventListener('DOMContentLoaded', () => {
         updateTimelineView();
     });
 
+    function updateTableView() {
+        frameList.innerHTML = '';
+        
+        if (isFolded) {
+            let nonKeyFrameCount = 0;
+            let lastKeyFrameIndex = -1;
+            let foldedFrames = [];
+            
+            currentFrames.forEach((frame, index) => {
+                if (frame.type === 'video' && frame.isKeyframe) {
+                    // Add folded frames if any
+                    if (nonKeyFrameCount > 0) {
+                        addFoldedTableRow(foldedFrames, lastKeyFrameIndex + 1, index - 1);
+                        foldedFrames = [];
+                        nonKeyFrameCount = 0;
+                    }
+                    addTableRow(frame, index);
+                    lastKeyFrameIndex = index;
+                } else {
+                    nonKeyFrameCount++;
+                    foldedFrames.push({ frame, index });
+                }
+            });
+            
+            // Add remaining folded frames if any
+            if (nonKeyFrameCount > 0) {
+                addFoldedTableRow(foldedFrames, lastKeyFrameIndex + 1, currentFrames.length - 1);
+            }
+        } else {
+            currentFrames.forEach((frame, index) => {
+                addTableRow(frame, index);
+            });
+        }
+    }
+
+    function addTableRow(frame, index) {
+        const row = document.createElement('tr');
+        row.classList.add(`frame-${frame.type}`);
+        row.dataset.index = index;
+        
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td>${formatTimestamp(frame.timestamp)}</td>
+            <td>${frame.type}</td>
+            <td>${formatFileSize(frame.size)}</td>
+            <td><pre>${frame.details || '-'}</pre></td>
+        `;
+        
+        frameList.appendChild(row);
+    }
+
+    function addFoldedTableRow(frames, startIndex, endIndex) {
+        const row = document.createElement('tr');
+        row.className = 'folded-rows';
+        row.dataset.startIndex = startIndex;
+        row.dataset.endIndex = endIndex;
+        
+        const count = endIndex - startIndex + 1;
+        row.innerHTML = `
+            <td colspan="5">
+                已折叠 ${count} 帧 (#${startIndex + 1} - #${endIndex + 1})
+            </td>
+        `;
+        
+        row.addEventListener('click', () => {
+            isFolded = false;
+            toggleFoldButton.textContent = '折叠非关键帧';
+            updateTimelineView();
+            updateTableView();
+            
+            // 滚动到第一个展开的帧
+            setTimeout(() => {
+                const targetRow = frameList.querySelector(`tr[data-index="${startIndex}"]`);
+                if (targetRow) {
+                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    highlightRow(targetRow);
+                }
+            }, 100);
+        });
+        
+        frameList.appendChild(row);
+    }
+
+    function highlightRow(row) {
+        // Remove previous highlight
+        const highlighted = frameList.querySelector('.table-row-highlight');
+        if (highlighted) {
+            highlighted.classList.remove('table-row-highlight');
+        }
+        
+        // Add new highlight
+        row.classList.add('table-row-highlight');
+    }
+
     function updateTimelineView() {
         timelineFrames.innerHTML = '';
         
@@ -92,7 +188,6 @@ document.addEventListener('DOMContentLoaded', () => {
             
             currentFrames.forEach((frame, index) => {
                 if (frame.type === 'video' && frame.isKeyframe) {
-                    // If we have accumulated non-key frames, add them as a folded block
                     if (nonKeyFrameCount > 0) {
                         addFoldedBlock(nonKeyFrameCount, lastKeyFrameIndex + 1, index - 1);
                         nonKeyFrameCount = 0;
@@ -104,7 +199,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
             
-            // Add remaining non-key frames if any
             if (nonKeyFrameCount > 0) {
                 addFoldedBlock(nonKeyFrameCount, lastKeyFrameIndex + 1, currentFrames.length - 1);
             }
@@ -122,6 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
             block.classList.add('keyframe');
         }
         block.style.width = `${frameWidth}px`;
+        block.dataset.index = index;
         
         const tooltip = document.createElement('div');
         tooltip.className = 'frame-tooltip';
@@ -129,12 +224,34 @@ document.addEventListener('DOMContentLoaded', () => {
         
         block.appendChild(tooltip);
         block.addEventListener('click', () => {
-            // Scroll to the corresponding table row
-            const row = frameList.children[index];
-            if (row) {
-                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                row.classList.add('highlight');
-                setTimeout(() => row.classList.remove('highlight'), 2000);
+            // Remove previous selection
+            if (selectedBlock) {
+                selectedBlock.classList.remove('selected-block');
+            }
+            
+            // Add new selection
+            block.classList.add('selected-block');
+            selectedBlock = block;
+            
+            // Find and scroll to corresponding row
+            let targetRow;
+            if (isFolded) {
+                // In folded mode, we need to find the containing fold or exact row
+                targetRow = frameList.querySelector(`tr[data-index="${index}"]`) ||
+                          Array.from(frameList.querySelectorAll('.folded-rows')).find(row => {
+                              const start = parseInt(row.dataset.startIndex);
+                              const end = parseInt(row.dataset.endIndex);
+                              return index >= start && index <= end;
+                          });
+            } else {
+                targetRow = frameList.querySelector(`tr[data-index="${index}"]`);
+            }
+            
+            if (targetRow) {
+                targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (!targetRow.classList.contains('folded-rows')) {
+                    highlightRow(targetRow);
+                }
             }
         });
         
@@ -201,29 +318,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressFill.style.width = `${progress}%`;
                 progressText.textContent = `${Math.round(progress)}%`;
                 
-                // Add new frame to the table
-                const row = document.createElement('tr');
-                row.classList.add(`frame-${currentFrame.type}`);
-                
-                row.innerHTML = `
-                    <td>${frames.length}</td>
-                    <td>${formatTimestamp(currentFrame.timestamp)}</td>
-                    <td>${currentFrame.type}</td>
-                    <td>${formatFileSize(currentFrame.size)}</td>
-                    <td><pre>${currentFrame.details || '-'}</pre></td>
-                `;
-                
-                frameList.appendChild(row);
-                
-                // Add frame to timeline
+                // Add frame to collection
                 currentFrames.push(currentFrame);
-                updateTimelineView();
                 
-                // Auto-scroll to bottom if needed
-                const container = frameList.parentElement;
-                if (container) {
-                    container.scrollTop = container.scrollHeight;
-                }
+                // Update both views
+                updateTimelineView();
+                updateTableView();
             });
             
             // Read and parse file

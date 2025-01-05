@@ -308,4 +308,28 @@ tbody tr:hover {
 #video-info span {
     color: #333;
     font-weight: 500;
+}
+
+.table-row-highlight {
+    background-color: #FFF3E0 !important;
+    transition: background-color 0.5s ease;
+}
+
+.folded-rows {
+    background-color: #f8f9fa;
+    cursor: pointer;
+}
+
+.folded-rows:hover {
+    background-color: #eee;
+}
+
+.folded-rows td {
+    text-align: center;
+    color: #666;
+}
+
+.selected-block {
+    outline: 2px solid #2196F3;
+    z-index: 1;
 } 
