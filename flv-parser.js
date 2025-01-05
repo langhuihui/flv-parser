@@ -1,0 +1,352 @@
+class FLVParser {
+    constructor() {
+        this.offset = 0;
+        this.frames = [];
+        this.error = null;
+        this.data = null;
+        this.onProgress = null;
+        this.videoInfo = {
+            width: 0,
+            height: 0,
+            profile: '',
+            level: 0
+        };
+    }
+
+    setProgressCallback(callback) {
+        this.onProgress = callback;
+    }
+
+    async parse(arrayBuffer) {
+        this.data = new DataView(arrayBuffer);
+        this.frames = [];
+        this.error = null;
+        this.offset = 0;
+        
+        try {
+            // Check FLV signature
+            const signature = String.fromCharCode(this.data.getUint8(0), this.data.getUint8(1), this.data.getUint8(2));
+            if (signature !== 'FLV') {
+                throw new Error('无效的FLV文件签名');
+            }
+
+            // Parse header
+            const version = this.data.getUint8(3);
+            const flags = this.data.getUint8(4);
+            const headerSize = this.data.getUint32(5);
+            
+            this.offset = headerSize;
+            
+            // Start async parsing
+            await this.parseNextTag();
+        } catch (e) {
+            this.error = {
+                message: e.message,
+                offset: this.offset,
+                parsedFrames: this.frames.length
+            };
+        }
+        
+        return {
+            frames: this.frames,
+            error: this.error
+        };
+    }
+
+    async parseNextTag() {
+        if (this.offset >= this.data.byteLength - 4) {
+            return;
+        }
+
+        try {
+            const previousTagSize = this.data.getUint32(this.offset);
+            this.offset += 4;
+            
+            if (this.offset >= this.data.byteLength) return;
+            
+            const tagInfo = this.parseTag(this.data);
+            if (tagInfo) {
+                this.frames.push(tagInfo);
+                if (this.onProgress) {
+                    this.onProgress({
+                        frames: this.frames,
+                        currentFrame: tagInfo,
+                        progress: (this.offset / this.data.byteLength) * 100
+                    });
+                }
+            }
+
+            // Schedule next tag parsing
+            await new Promise(resolve => setTimeout(resolve, 0)); // 让出主线程
+            await this.parseNextTag();
+        } catch (e) {
+            this.error = {
+                message: e.message,
+                offset: this.offset,
+                parsedFrames: this.frames.length
+            };
+        }
+    }
+
+    parseTag(data) {
+        if (this.offset + 11 > data.byteLength) {
+            throw new Error('标签头部数据不完整');
+        }
+
+        const tagType = data.getUint8(this.offset);
+        if (tagType !== 8 && tagType !== 9 && tagType !== 18) {
+            throw new Error(`无效的标签类型: ${tagType}`);
+        }
+
+        const dataSize = (data.getUint8(this.offset + 1) << 16) | 
+                        (data.getUint8(this.offset + 2) << 8) | 
+                        (data.getUint8(this.offset + 3));
+
+        if (this.offset + 11 + dataSize > data.byteLength) {
+            throw new Error('标签数据不完整');
+        }
+
+        const timestamp = (data.getUint8(this.offset + 7) << 24) |
+                         (data.getUint8(this.offset + 4) << 16) |
+                         (data.getUint8(this.offset + 5) << 8) |
+                         (data.getUint8(this.offset + 6));
+
+        const tagHeader = 11;
+        let details = '';
+        let isKeyframe = false;
+        
+        if (tagType === 9 && dataSize > 0) { // Video
+            try {
+                const frameType = (data.getUint8(this.offset + tagHeader) >> 4) & 0x0F;
+                const codecID = data.getUint8(this.offset + tagHeader) & 0x0F;
+                
+                isKeyframe = frameType === 1;
+                details = `帧类型: ${this.getFrameType(frameType)}, 编码: ${this.getCodecName(codecID)}\n`;
+                
+                if (codecID === 7) { // AVC
+                    const avcPacketType = data.getUint8(this.offset + tagHeader + 1);
+                    if (avcPacketType === 0) { // AVC sequence header
+                        const avcInfo = this.parseAVCDecoderConfigurationRecord(data, this.offset + tagHeader + 2);
+                        details += avcInfo.details;
+                        Object.assign(this.videoInfo, avcInfo.videoInfo);
+                    }
+                }
+            } catch (e) {
+                details = `解析视频数据时出错: ${e.message}`;
+            }
+        }
+
+        const frame = {
+            type: this.getTagType(tagType),
+            timestamp,
+            size: dataSize,
+            details,
+            isKeyframe
+        };
+
+        this.offset += tagHeader + dataSize;
+        return frame;
+    }
+
+    getFrameType(type) {
+        switch (type) {
+            case 1: return '关键帧';
+            case 2: return '非关键帧';
+            case 3: return '可丢弃帧';
+            case 4: return '生成关键帧';
+            case 5: return '视频信息/命令帧';
+            default: return `未知(${type})`;
+        }
+    }
+
+    getCodecName(codecID) {
+        switch (codecID) {
+            case 1: return 'JPEG';
+            case 2: return 'H.263';
+            case 3: return 'Screen video';
+            case 4: return 'VP6';
+            case 5: return 'VP6 with alpha';
+            case 6: return 'Screen video v2';
+            case 7: return 'AVC/H.264';
+            default: return `未知(${codecID})`;
+        }
+    }
+
+    getTagType(type) {
+        switch (type) {
+            case 8: return 'audio';
+            case 9: return 'video';
+            case 18: return 'script';
+            default: return 'unknown';
+        }
+    }
+
+    parseAVCDecoderConfigurationRecord(data, offset) {
+        const version = data.getUint8(offset);
+        const profile = data.getUint8(offset + 1);
+        const compatibility = data.getUint8(offset + 2);
+        const level = data.getUint8(offset + 3);
+        
+        const lengthSizeMinusOne = data.getUint8(offset + 4) & 0x03;
+        const numOfSPS = data.getUint8(offset + 5) & 0x1F;
+        
+        let currentOffset = offset + 6;
+        let details = `Profile: ${this.getAVCProfileName(profile)}, Level: ${level/10}\n`;
+        let videoInfo = {
+            profile: this.getAVCProfileName(profile),
+            level: level/10
+        };
+        
+        // Parse SPS
+        for (let i = 0; i < numOfSPS; i++) {
+            const spsLength = (data.getUint8(currentOffset) << 8) | data.getUint8(currentOffset + 1);
+            currentOffset += 2;
+            
+            const spsInfo = this.parseSPS(data, currentOffset, spsLength);
+            details += spsInfo.details;
+            Object.assign(videoInfo, spsInfo.videoInfo);
+            
+            currentOffset += spsLength;
+        }
+        
+        return { details, videoInfo };
+    }
+
+    parseSPS(data, offset, length) {
+        // 这里实现H.264 SPS解析
+        try {
+            const bits = new BitReader(data, offset, length);
+            
+            // 跳过固定头部
+            bits.skipBits(8); // NAL header
+            
+            const profileIdc = bits.readBits(8);
+            bits.skipBits(16); // constraint_set_flags and reserved_zero_5bits
+            const levelIdc = bits.readBits(8);
+            
+            bits.readUEG(); // seq_parameter_set_id
+            
+            // 根据profile读取不同的参数
+            if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134].includes(profileIdc)) {
+                const chromaFormatIdc = bits.readUEG();
+                if (chromaFormatIdc === 3) {
+                    bits.skipBits(1); // separate_colour_plane_flag
+                }
+                bits.readUEG(); // bit_depth_luma_minus8
+                bits.readUEG(); // bit_depth_chroma_minus8
+                bits.skipBits(1); // qpprime_y_zero_transform_bypass_flag
+                
+                const seqScalingMatrixPresent = bits.readBits(1);
+                if (seqScalingMatrixPresent) {
+                    const chromaFormatIdcTable = chromaFormatIdc !== 3 ? 8 : 12;
+                    for (let i = 0; i < chromaFormatIdcTable; i++) {
+                        if (bits.readBits(1)) {
+                            bits.skipBits(i < 6 ? 16 : 64); // scaling_list
+                        }
+                    }
+                }
+            }
+            
+            bits.readUEG(); // log2_max_frame_num_minus4
+            const picOrderCntType = bits.readUEG();
+            
+            if (picOrderCntType === 0) {
+                bits.readUEG(); // log2_max_pic_order_cnt_lsb_minus4
+            } else if (picOrderCntType === 1) {
+                bits.skipBits(1); // delta_pic_order_always_zero_flag
+                bits.readSEG(); // offset_for_non_ref_pic
+                bits.readSEG(); // offset_for_top_to_bottom_field
+                const numRefFramesInPicOrderCntCycle = bits.readUEG();
+                for (let i = 0; i < numRefFramesInPicOrderCntCycle; i++) {
+                    bits.readSEG(); // offset_for_ref_frame
+                }
+            }
+            
+            bits.readUEG(); // max_num_ref_frames
+            bits.skipBits(1); // gaps_in_frame_num_value_allowed_flag
+            
+            const picWidthInMbsMinus1 = bits.readUEG();
+            const picHeightInMapUnitsMinus1 = bits.readUEG();
+            
+            const frameMbsOnlyFlag = bits.readBits(1);
+            const mb_adaptive_frame_field_flag = frameMbsOnlyFlag ? 0 : bits.readBits(1);
+            
+            const width = (picWidthInMbsMinus1 + 1) * 16;
+            const height = (2 - frameMbsOnlyFlag) * (picHeightInMapUnitsMinus1 + 1) * 16;
+            
+            return {
+                details: `分辨率: ${width}x${height}\n`,
+                videoInfo: { width, height }
+            };
+        } catch (e) {
+            return {
+                details: `解析SPS失败: ${e.message}\n`,
+                videoInfo: { width: 0, height: 0 }
+            };
+        }
+    }
+
+    getAVCProfileName(profile) {
+        const profiles = {
+            66: 'Baseline',
+            77: 'Main',
+            88: 'Extended',
+            100: 'High',
+            110: 'High 10',
+            122: 'High 4:2:2',
+            244: 'High 4:4:4',
+            44: 'CAVLC 4:4:4'
+        };
+        return profiles[profile] || `Unknown(${profile})`;
+    }
+}
+
+class BitReader {
+    constructor(data, offset, length) {
+        this.data = data;
+        this.offset = offset;
+        this.length = length;
+        this.bitOffset = 0;
+        this.currentByte = this.data.getUint8(this.offset);
+    }
+
+    readBits(count) {
+        let result = 0;
+        for (let i = 0; i < count; i++) {
+            result = (result << 1) | this.readBit();
+        }
+        return result;
+    }
+
+    readBit() {
+        const bit = (this.currentByte >> (7 - this.bitOffset)) & 1;
+        this.bitOffset++;
+        if (this.bitOffset === 8) {
+            this.bitOffset = 0;
+            this.offset++;
+            if (this.offset < this.length) {
+                this.currentByte = this.data.getUint8(this.offset);
+            }
+        }
+        return bit;
+    }
+
+    skipBits(count) {
+        for (let i = 0; i < count; i++) {
+            this.readBit();
+        }
+    }
+
+    readUEG() {
+        let leadingZeros = 0;
+        while (this.readBit() === 0 && leadingZeros < 32) {
+            leadingZeros++;
+        }
+        return leadingZeros === 0 ? 0 : ((1 << leadingZeros) | this.readBits(leadingZeros)) - 1;
+    }
+
+    readSEG() {
+        const value = this.readUEG();
+        return (value & 1) ? (value + 1) >> 1 : -(value >> 1);
+    }
+} 

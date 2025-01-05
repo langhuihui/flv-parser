@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FLV Parser</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div id="drop-zone" class="drop-zone">
+            <p>拖放FLV文件到这里</p>
+            <p>或者</p>
+            <input type="file" id="file-input" accept=".flv">
+        </div>
+        <div id="results" class="results hidden">
+            <h2>FLV文件分析结果</h2>
+            <div class="file-info">
+                <p>文件名: <span id="filename"></span></p>
+                <p>文件大小: <span id="filesize"></span></p>
+                <div id="video-info" class="hidden">
+                    <p>视频信息:</p>
+                    <p>分辨率: <span id="resolution"></span></p>
+                    <p>Profile: <span id="profile"></span></p>
+                    <p>Level: <span id="level"></span></p>
+                </div>
+            </div>
+            <div id="timeline-view" class="timeline-view">
+                <div class="timeline-controls">
+                    <button id="toggle-fold" class="control-button">折叠非关键帧</button>
+                    <div class="zoom-controls">
+                        <button id="zoom-out" class="control-button">-</button>
+                        <span>缩放</span>
+                        <button id="zoom-in" class="control-button">+</button>
+                    </div>
+                </div>
+                <div class="timeline-container">
+                    <div id="timeline-frames" class="timeline-frames"></div>
+                </div>
+            </div>
+            <div id="error-info" class="error-info hidden">
+                <h3>解析错误</h3>
+                <p>错误位置: <span id="error-offset"></span></p>
+                <p>错误原因: <span id="error-message"></span></p>
+                <p>已解析帧数: <span id="parsed-frames"></span></p>
+            </div>
+            <div class="table-container">
+                <table id="frame-table">
+                    <thead>
+                        <tr>
+                            <th>序号</th>
+                            <th>时间戳</th>
+                            <th>类型</th>
+                            <th>大小</th>
+                            <th>详细信息</th>
+                        </tr>
+                    </thead>
+                    <tbody id="frame-list"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <script src="flv-parser.js"></script>
+    <script src="app.js"></script>
+</body>
+</html> 
