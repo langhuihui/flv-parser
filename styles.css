@@ -221,18 +221,20 @@ tbody tr:hover {
 
 .timeline-frames {
     display: flex;
-    gap: 2px;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 10px;
     min-height: 40px;
-    transition: all 0.3s ease;
 }
 
 .frame-block {
-    width: 10px;
-    height: 20px;
-    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
     position: relative;
     cursor: pointer;
     transition: all 0.3s ease;
+    border-radius: 4px;
 }
 
 .frame-block:hover {
@@ -252,12 +254,12 @@ tbody tr:hover {
 }
 
 .frame-block.keyframe {
-    height: 30px;
     border: 2px solid #FB8C00;
 }
 
 .frame-block.folded {
-    width: 20px;
+    width: 80px;
+    flex: 0 0 80px;
     background-image: linear-gradient(45deg, rgba(255,255,255,0.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.2) 75%, transparent 75%, transparent);
     background-size: 10px 10px;
 }

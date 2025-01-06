@@ -151,7 +151,8 @@ class FLVParser {
       size: dataSize,
       details,
       isKeyframe,
-      isSequenceHeader
+      isSequenceHeader,
+      blockSize: 40
     };
 
     this.offset += tagHeader + dataSize;
