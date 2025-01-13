@@ -1,0 +1,15 @@
+{
+  "name": "flv-parser",
+  "version": "1.0.0",
+  "description": "一个基于Web的FLV文件解析器，可以分析FLV文件的帧信息。",
+  "main": "flv-parser.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}

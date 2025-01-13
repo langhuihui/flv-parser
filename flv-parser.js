@@ -5,6 +5,8 @@ class FLVParser {
     this.error = null;
     this.data = null;
     this.onProgress = null;
+    this.keyframePositions = [];
+    this.isPaused = false;
     this.videoInfo = {
       width: 0,
       height: 0,
@@ -71,14 +73,17 @@ class FLVParser {
           this.onProgress({
             frames: this.frames,
             currentFrame: tagInfo,
-            progress: (this.offset / this.data.byteLength) * 100
+            progress: (this.offset / this.data.byteLength) * 100,
+            hasKeyframePositions: this.keyframePositions.length > 0
           });
         }
       }
 
       // Schedule next tag parsing
-      await new Promise(resolve => setTimeout(resolve, 0)); // 让出主线程
-      await this.parseNextTag();
+      if (!this.isPaused) {
+        await new Promise(resolve => setTimeout(resolve, 0)); // 让出主线程
+        await this.parseNextTag();
+      }
     } catch (e) {
       this.error = {
         message: e.message,
@@ -115,6 +120,7 @@ class FLVParser {
     let details = '';
     let isKeyframe = false;
     let isSequenceHeader = false;
+    const filePosition = this.offset;
 
     if (tagType === 9 && dataSize > 0) { // Video
       try {
@@ -152,6 +158,7 @@ class FLVParser {
       details,
       isKeyframe,
       isSequenceHeader,
+      filePosition,
       blockSize: 40
     };
 
@@ -163,6 +170,9 @@ class FLVParser {
     let currentOffset = offset;
     const endOffset = offset + length;
     let result = '';
+    let keyframes = null;
+    let filepositions = [];
+    let times = [];
 
     try {
       // Type of SCRIPTDATAVALUE (should be 2 for string)
@@ -227,17 +237,144 @@ class FLVParser {
                 }
                 currentOffset += valueLen;
                 break;
+              case 3: // Object type
+                value = {};
+                while (currentOffset < endOffset - 3) {
+                  const objNameLen = (data.getUint8(currentOffset) << 8) | data.getUint8(currentOffset + 1);
+                  if (objNameLen === 0) {
+                    currentOffset += 3; // Skip end marker (0x000009)
+                    break;
+                  }
+                  currentOffset += 2;
+
+                  let objName = '';
+                  for (let i = 0; i < objNameLen; i++) {
+                    objName += String.fromCharCode(data.getUint8(currentOffset + i));
+                  }
+                  currentOffset += objNameLen;
+
+                  const objValueType = data.getUint8(currentOffset++);
+                  let objValue;
+
+                  switch (objValueType) {
+                    case 0: // Number type
+                      objValue = new DataView(data.buffer, currentOffset, 8).getFloat64(0);
+                      currentOffset += 8;
+                      break;
+                    case 1: // Boolean type
+                      objValue = data.getUint8(currentOffset++) !== 0;
+                      break;
+                    case 2: // String type
+                      const objStrLen = (data.getUint8(currentOffset) << 8) | data.getUint8(currentOffset + 1);
+                      currentOffset += 2;
+                      objValue = '';
+                      for (let i = 0; i < objStrLen; i++) {
+                        objValue += String.fromCharCode(data.getUint8(currentOffset + i));
+                      }
+                      currentOffset += objStrLen;
+                      break;
+                    case 10: // Array type
+                      const arrayLen = data.getUint32(currentOffset);
+                      currentOffset += 4;
+                      objValue = [];
+                      for (let i = 0; i < arrayLen; i++) {
+                        const elemType = data.getUint8(currentOffset++);
+                        if (elemType === 0) { // Number type
+                          const elemValue = new DataView(data.buffer, currentOffset, 8).getFloat64(0);
+                          objValue.push(elemValue);
+                          currentOffset += 8;
+                        }
+                      }
+                      break;
+                  }
+
+                  value[objName] = objValue;
+                }
+                break;
+              case 10: // Strict array type
+                const arrayLen = data.getUint32(currentOffset);
+                currentOffset += 4;
+                value = [];
+
+                // Parse array elements
+                for (let i = 0; i < arrayLen; i++) {
+                  const elemType = data.getUint8(currentOffset++);
+                  switch (elemType) {
+                    case 0: // Number type
+                      const elemValue = new DataView(data.buffer, currentOffset, 8).getFloat64(0);
+                      value.push(elemValue);
+                      currentOffset += 8;
+                      break;
+                    case 1: // Boolean type
+                      value.push(data.getUint8(currentOffset++) !== 0);
+                      break;
+                    case 2: // String type
+                      const strLen = (data.getUint8(currentOffset) << 8) | data.getUint8(currentOffset + 1);
+                      currentOffset += 2;
+                      let str = '';
+                      for (let j = 0; j < strLen; j++) {
+                        str += String.fromCharCode(data.getUint8(currentOffset + j));
+                      }
+                      value.push(str);
+                      currentOffset += strLen;
+                      break;
+                    default:
+                      console.warn(`Unknown array element type: ${elemType}`);
+                      value.push(null);
+                      break;
+                  }
+                }
+                break;
               default:
                 value = `[Type: ${valueType}]`;
                 // Skip unknown types
                 currentOffset = endOffset;
             }
 
-            result += `  ${propertyName}: ${value}\n`;
+            // Store keyframes data
+            if (propertyName === 'keyframes') {
+              keyframes = value;
+              console.log('Found keyframes object:', keyframes);
+              if (keyframes && keyframes.filepositions && Array.isArray(keyframes.filepositions)) {
+                this.keyframePositions = keyframes.filepositions;
+                console.log(`Found ${this.keyframePositions.length} filepositions in keyframes object:`, this.keyframePositions.slice(0, 5));
+                if (this.onProgress) {
+                  this.onProgress({
+                    frames: this.frames,
+                    currentFrame: null,
+                    progress: (this.offset / this.data.byteLength) * 100,
+                    hasKeyframePositions: true
+                  });
+                }
+              }
+            } else if (propertyName === 'filepositions') {
+              filepositions = value;
+              // Validate and update keyframe positions
+              if (Array.isArray(value) && value.length > 0) {
+                this.keyframePositions = value;
+                console.log(`Found ${value.length} filepositions:`, value.slice(0, 5));
+                if (this.onProgress) {
+                  this.onProgress({
+                    frames: this.frames,
+                    currentFrame: null,
+                    progress: (this.offset / this.data.byteLength) * 100,
+                    hasKeyframePositions: true
+                  });
+                }
+              } else {
+                console.warn('Invalid filepositions:', value);
+              }
+            } else if (propertyName === 'times') {
+              times = value;
+              console.log('Found times array:', times ? times.length : 0);
+            }
+
+            result += `  ${propertyName}: ${Array.isArray(value) ? `[${value.join(', ')}]` : value}\n`;
           }
         }
       }
     } catch (e) {
+      console.error('Error parsing script data:', e);
       return `解析Script数据失败: ${e.message}`;
     }
 
@@ -394,6 +531,17 @@ class FLVParser {
       44: 'CAVLC 4:4:4'
     };
     return profiles[profile] || `Unknown(${profile})`;
+  }
+
+  pause() {
+    this.isPaused = true;
+  }
+
+  resume() {
+    this.isPaused = false;
+    if (this.data) {
+      this.parseNextTag(); // 继续解析
+    }
   }
 }
 
