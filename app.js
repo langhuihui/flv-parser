@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const pauseButton = document.getElementById('pause-button');
   const keyframeInfo = document.getElementById('keyframe-info');
   const filepositionsDiv = document.getElementById('filepositions');
+  const binaryData = document.getElementById('binary-data');
+  const binaryPosition = document.getElementById('binary-position');
+  const binarySize = document.getElementById('binary-size');
+  const binaryContent = document.getElementById('binary-content');
 
   const parser = new FLVParser();
   let isFolded = true;
@@ -141,12 +145,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const row = document.createElement('tr');
     row.classList.add(`frame-${frame.type}`);
     row.dataset.index = index;
+    row.dataset.position = frame.filePosition;
+    row.dataset.size = frame.size;
 
     let positionText = `0x${frame.filePosition.toString(16).toUpperCase()}`;
     if (frame.type === 'video' && frame.isKeyframe) {
       const isInFilepositions = parser.keyframePositions.includes(frame.filePosition);
       if (!isInFilepositions) {
-        positionText += ' ⚠️'; // Add warning emoji for positions not in filepositions
+        positionText += ' ⚠️';
       }
     }
 
@@ -158,6 +164,11 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>${positionText}</td>
             <td><pre>${frame.details || '-'}</pre></td>
         `;
+
+    row.addEventListener('click', () => {
+      showBinaryData(frame.filePosition, frame.size);
+      highlightRow(row);
+    });
 
     frameList.appendChild(row);
   }
@@ -245,6 +256,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     block.style.width = `${frameWidth}px`;
     block.dataset.index = index;
+    block.dataset.position = frame.filePosition;
+    block.dataset.size = frame.size;
 
     const tooltip = document.createElement('div');
     tooltip.className = 'frame-tooltip';
@@ -260,6 +273,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // Add new selection
       block.classList.add('selected-block');
       selectedBlock = block;
+
+      // Show binary data
+      showBinaryData(frame.filePosition, frame.size);
 
       // Find and scroll to corresponding row
       let targetRow;
@@ -489,5 +505,60 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('Added position item:', position);
     });
     console.log('Filepositions list items:', filepositionsDiv.children.length);
+  }
+
+  function showBinaryData(position, size) {
+    // Include the 11-byte tag header that comes after the data
+    const headerSize = 11;
+    const actualSize = size + headerSize;
+
+    binaryPosition.textContent = `0x${position.toString(16).toUpperCase()} (${position} 字节)`;
+    binarySize.textContent = formatFileSize(actualSize);
+    binaryContent.innerHTML = '';
+
+    // Read binary data including the trailing header
+    const data = new DataView(parser.data.buffer, position, actualSize);
+    const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+
+    // Format binary data in rows of 16 bytes
+    for (let i = 0; i < bytes.length; i += 16) {
+      const offsetDiv = document.createElement('div');
+      offsetDiv.className = 'offset';
+      offsetDiv.textContent = `0x${(position + i).toString(16).padStart(8, '0').toUpperCase()}`;
+
+      const hexDiv = document.createElement('div');
+      hexDiv.className = 'hex';
+      const hexBytes = Array.from(bytes.slice(i, i + 16))
+        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+        .join(' ');
+      hexDiv.textContent = hexBytes.padEnd(48, ' ');
+
+      const asciiDiv = document.createElement('div');
+      asciiDiv.className = 'ascii';
+      const asciiBytes = Array.from(bytes.slice(i, i + 16))
+        .map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.')
+        .join('');
+      asciiDiv.textContent = asciiBytes;
+
+      // Highlight the trailing header bytes
+      if (i >= size) {
+        const row = document.createElement('div');
+        row.style.display = 'contents';
+        row.style.color = '#E91E63';  // Use a different color for header bytes
+        row.appendChild(offsetDiv);
+        row.appendChild(hexDiv);
+        row.appendChild(asciiDiv);
+        binaryContent.appendChild(row);
+      } else {
+        const row = document.createElement('div');
+        row.style.display = 'contents';
+        row.appendChild(offsetDiv);
+        row.appendChild(hexDiv);
+        row.appendChild(asciiDiv);
+        binaryContent.appendChild(row);
+      }
+    }
+
+    binaryData.classList.remove('hidden');
   }
 }); 

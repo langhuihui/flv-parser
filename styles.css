@@ -415,4 +415,50 @@ tbody tr:hover {
 
 .filepositions-list .position-item span:nth-child(3) {
     color: #666;
+}
+
+.binary-data {
+    margin: 1rem 0;
+    padding: 1.5rem;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.binary-data.hidden {
+    display: none;
+}
+
+.binary-data-info {
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    gap: 2rem;
+}
+
+.binary-content {
+    font-family: monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+    display: grid;
+    grid-template-columns: 100px 300px 150px;
+    gap: 1rem;
+}
+
+.binary-content .offset {
+    color: #666;
+}
+
+.binary-content .hex {
+    color: #2196F3;
+}
+
+.binary-content .ascii {
+    color: #333;
 } 
