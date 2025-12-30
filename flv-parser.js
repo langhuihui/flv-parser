@@ -137,6 +137,17 @@ class FLVParser {
             details = '序列头帧\n' + details + avcInfo.details;
             Object.assign(this.videoInfo, avcInfo.videoInfo);
             isSequenceHeader = true;
+          } else {
+            const naluType = data.getUint8(this.offset + tagHeader + 2 + 3 + 4) & 0x1F;
+            switch (naluType) {
+              case 6:
+              case 9:
+              case 1:
+              case 5:
+                break;
+              default: console.log('NALU type:', naluType);
+            }
+            details += `NALU类型: ${naluType}\n`;
           }
         }
       } catch (e) {
